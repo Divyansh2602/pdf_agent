@@ -1,0 +1,187 @@
+{
+    "name": "Academic Journal Layout Automation Agent",
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "1",
+            "name": "Start Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                250,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "chat",
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are an expert academic writing assistant specializing in formal, academic-journal style language. Focus on: 1) Using precise, scholarly vocabulary, 2) Maintaining objective, third-person perspective, 3) Employing passive voice where appropriate, 4) Ensuring proper academic sentence structure, 5) Adding appropriate academic transitions and connectors, 6) Maintaining consistency in terminology, 7) Ensuring proper academic tone and register."
+                    },
+                    {
+                        "role": "user",
+                        "content": "Refine the following text into formal, academic-journal style language while maintaining the original structure and formatting:\n\n{{$json[\"draft\"]}}\n\nReturn the refined content with improved academic writing style."
+                    }
+                ],
+                "options": {
+                    "temperature": 0.3,
+                    "maxTokens": 4000
+                }
+            },
+            "id": "2",
+            "name": "OpenAI Refine Writing",
+            "type": "n8n-nodes-base.openAi",
+            "typeVersion": 1,
+            "position": [
+                500,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "functionCode": "items[0].json.formatted = `---\\ntitle: Sample Paper\\nauthor: Author Name\\n---\\n` + items[0].json.data;\nreturn items;"
+            },
+            "id": "3",
+            "name": "Format Metadata",
+            "type": "n8n-nodes-base.function",
+            "typeVersion": 1,
+            "position": [
+                750,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "command": "pandoc",
+                "arguments": "input.md -o output.tex --template=journal-template.tex"
+            },
+            "id": "4",
+            "name": "Pandoc MD to LaTeX",
+            "type": "n8n-nodes-base.executeCommand",
+            "typeVersion": 1,
+            "position": [
+                1000,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "uploadFile",
+                "projectId": "your-overleaf-project-id",
+                "fileName": "output.tex",
+                "binaryPropertyName": "data"
+            },
+            "id": "5",
+            "name": "Overleaf Upload LaTeX",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 1,
+            "position": [
+                1250,
+                300
+            ],
+            "notes": "Uploads LaTeX file to Overleaf project"
+        },
+        {
+            "parameters": {
+                "command": "pandoc",
+                "arguments": "output.tex -o paper.pdf --pdf-engine=xelatex"
+            },
+            "id": "6",
+            "name": "Pandoc LaTeX to PDF",
+            "type": "n8n-nodes-base.executeCommand",
+            "typeVersion": 1,
+            "position": [
+                1500,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "fromEmail": "your_email@example.com",
+                "toEmail": "advisor@example.com",
+                "subject": "Draft: Academic Journal Submission",
+                "text": "Please find attached the latest draft.",
+                "attachments": "paper.pdf"
+            },
+            "id": "7",
+            "name": "Send Email",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 1,
+            "position": [
+                1750,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Start Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "OpenAI Refine Writing",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "OpenAI Refine Writing": {
+            "main": [
+                [
+                    {
+                        "node": "Format Metadata",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Format Metadata": {
+            "main": [
+                [
+                    {
+                        "node": "Pandoc MD to LaTeX",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Pandoc MD to LaTeX": {
+            "main": [
+                [
+                    {
+                        "node": "Overleaf Upload LaTeX",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Overleaf Upload LaTeX": {
+            "main": [
+                [
+                    {
+                        "node": "Pandoc LaTeX to PDF",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Pandoc LaTeX to PDF": {
+            "main": [
+                [
+                    {
+                        "node": "Send Email",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

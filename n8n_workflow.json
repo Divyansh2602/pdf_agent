@@ -1,0 +1,266 @@
+{
+  "name": "PDF Processing Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pdf-process",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "pdf-process-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.metadata.conversion_method }}",
+              "operation": "equal",
+              "value2": "overleaf"
+            }
+          ]
+        }
+      },
+      "id": "check-conversion-method",
+      "name": "Check Conversion Method",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.overleaf.com/v1/projects/{{ $json.metadata.project_id }}/compile",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "overleafApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $json.metadata.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "compiler",
+              "value": "xelatex"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "overleaf-compile",
+      "name": "Overleaf Compile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.pdf_file }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-pdf",
+      "name": "Download PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "fromEmail": "{{ $json.metadata.from_email }}",
+        "toEmail": "{{ $json.metadata.to_email }}",
+        "subject": "PDF Document: {{ $json.metadata.input_file }}",
+        "message": "Please find the attached PDF document generated from {{ $json.metadata.input_file }}",
+        "attachments": {
+          "attachments": [
+            {
+              "property": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"message\": \"PDF processed and emailed successfully\", \"output_file\": $json.metadata.output_file, \"timestamp\": $json.metadata.timestamp } }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $json.metadata.slack_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "#pdf-notifications"
+            },
+            {
+              "name": "text",
+              "value": "📄 PDF Document Processed Successfully!\n\nFile: {{ $json.metadata.input_file }}\nOutput: {{ $json.metadata.output_file }}\nMethod: {{ $json.metadata.conversion_method }}\nTime: {{ $json.metadata.timestamp }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "slack-notification",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "table": "pdf_conversions",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "input_file": "={{ $json.metadata.input_file }}",
+            "output_file": "={{ $json.metadata.output_file }}",
+            "file_type": "={{ $json.metadata.file_type }}",
+            "conversion_method": "={{ $json.metadata.conversion_method }}",
+            "timestamp": "={{ $json.metadata.timestamp }}",
+            "status": "completed"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-to-database",
+      "name": "Log to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [900, 700]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Conversion Method",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Conversion Method": {
+      "main": [
+        [
+          {
+            "node": "Overleaf Compile",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Overleaf Compile": {
+      "main": [
+        [
+          {
+            "node": "Download PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download PDF": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
