@@ -16,17 +16,17 @@
     "email": {
         "smtp_server": "smtp.gmail.com",
         "smtp_port": 587,
-        "username": "divyansh2622005@gmail.com",
-        "password": "",
-        "from_email": "divyansh2622005@gmail.com",
-        "to_email": "divyanshg2602@gmail.com"
+        "username": "pdf.converter.now@gmail.com",
+        "password": "wvox lptb ympe emey",
+        "from_email": "pdf.converter.now@gmail.com",
+        "to_email": "snehalkansal10@gmail.com"
     },
     "n8n": {
         "webhook_url": "",
         "api_key": ""
     },
     "openai": {
-        "api_key": "",
+        "api_key": "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",
         "model": "gpt-4o-mini",
         "temperature": 0.3,
         "max_tokens": 4000

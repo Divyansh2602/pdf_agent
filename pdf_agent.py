@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI Agent for converting LaTeX and Markdown files to PDF
-Supports pandoc, Overleaf, n8n integration, and email functionality
+AI Agent for converting Markdown files (README.md) into IEEE-style Research Papers
+Output: IEEE-formatted DOCX + PDF, then emailed to recipient.
 """
 
 import os
@@ -10,53 +10,41 @@ import json
 import logging
 import smtplib
 import subprocess
-import requests
+import argparse
 from pathlib import Path
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from typing import Optional, Dict, List, Tuple
-import argparse
-from datetime import datetime
+from docx import Document
 import openai
 
-# Configure logging
+# ----------------------------------------------------------------
+# Logging Setup
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler('pdf_agent.log'),
+        logging.FileHandler("pdf_agent.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
+# ----------------------------------------------------------------
 class PDFAgent:
-    """AI Agent for PDF conversion and email distribution"""
-    
-    def __init__(self, config_file: str = "config.json"):
-        """Initialize the PDF Agent with configuration"""
+    """AI Agent for Markdown → IEEE Word + PDF + Email"""
+
+    def __init__(self, config_file="config.json"):
         self.config = self.load_config(config_file)
-        self.supported_formats = ['.md', '.markdown', '.tex', '.latex']
-        
-        # Initialize OpenAI
         if self.config.get('openai', {}).get('api_key'):
             openai.api_key = self.config['openai']['api_key']
-        
-    def load_config(self, config_file: str) -> Dict:
-        """Load configuration from JSON file"""
+
+    # ----------------------------------------------------------------
+    def load_config(self, config_file: str):
+        """Load configuration settings"""
         default_config = {
-            "pandoc": {
-                "engine": "xelatex",
-                "template": None,
-                "options": ["--standalone", "--toc"]
-            },
-            "overleaf": {
-                "api_url": "https://www.overleaf.com/api/v1",
-                "api_key": "",
-                "project_id": ""
-            },
             "email": {
                 "smtp_server": "smtp.gmail.com",
                 "smtp_port": 587,
@@ -65,10 +53,6 @@ class PDFAgent:
                 "from_email": "",
                 "to_email": ""
             },
-            "n8n": {
-                "webhook_url": "",
-                "api_key": ""
-            },
             "openai": {
                 "api_key": "",
                 "model": "gpt-4o-mini",
@@ -76,499 +60,315 @@ class PDFAgent:
                 "max_tokens": 4000
             },
             "output": {
-                "directory": "output",
-                "filename_template": "{original_name}_{timestamp}.pdf"
+                "directory": "output"
             }
         }
-        
         if os.path.exists(config_file):
-            try:
-                with open(config_file, 'r') as f:
-                    config = json.load(f)
-                # Merge with defaults
-                for key, value in default_config.items():
-                    if key not in config:
-                        config[key] = value
-                return config
-            except Exception as e:
-                logger.error(f"Error loading config: {e}")
-                return default_config
+            with open(config_file, 'r') as f:
+                cfg = json.load(f)
+            for k, v in default_config.items():
+                if k not in cfg:
+                    cfg[k] = v
+            return cfg
         else:
-            # Create default config file
             with open(config_file, 'w') as f:
                 json.dump(default_config, f, indent=4)
-            logger.info(f"Created default config file: {config_file}")
+            logger.warning("Created default config.json; please fill it in.")
             return default_config
-    
-    def detect_file_type(self, file_path: str) -> Optional[str]:
-        """Detect if file is LaTeX or Markdown based on extension and content"""
-        path = Path(file_path)
-        extension = path.suffix.lower()
-        
-        if extension in ['.tex', '.latex']:
-            return 'latex'
-        elif extension in ['.md', '.markdown']:
-            return 'markdown'
-        else:
-            # Try to detect by content
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read(1000)  # Read first 1000 chars
-                    if '\\documentclass' in content or '\\begin{document}' in content:
-                        return 'latex'
-                    elif content.startswith('#') or '##' in content:
-                        return 'markdown'
-            except Exception as e:
-                logger.error(f"Error reading file {file_path}: {e}")
-        
-        return None
-    
-    def convert_with_pandoc(self, input_file: str, output_file: str, file_type: str) -> bool:
-        """Convert file to PDF using pandoc"""
-        try:
-            # Ensure output directory exists
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
-            
-            # Build pandoc command
-            cmd = ['pandoc', input_file, '-o', output_file]
-            
-            # Add engine and options based on file type
-            if file_type == 'latex':
-                cmd.extend(['--pdf-engine', self.config['pandoc']['engine']])
-            else:  # markdown
-                cmd.extend(['--pdf-engine', self.config['pandoc']['engine']])
-            
-            # Add additional options
-            for option in self.config['pandoc']['options']:
-                cmd.append(option)
-            
-            # Add template if specified
-            if self.config['pandoc']['template']:
-                cmd.extend(['--template', self.config['pandoc']['template']])
-            
-            logger.info(f"Running pandoc command: {' '.join(cmd)}")
-            
-            # Execute pandoc with proper encoding
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            
-            if result.returncode == 0:
-                logger.info(f"Successfully converted {input_file} to {output_file}")
-                return True
-            else:
-                logger.error(f"Pandoc conversion failed: {result.stderr}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error during pandoc conversion: {e}")
-            return False
-    
-    def convert_with_overleaf(self, input_file: str, output_file: str) -> bool:
-        """Convert LaTeX file using Overleaf API"""
-        try:
-            if not self.config['overleaf']['api_key']:
-                logger.warning("Overleaf API key not configured, skipping Overleaf conversion")
-                return False
-            
-            # Read LaTeX content
-            with open(input_file, 'r', encoding='utf-8') as f:
-                latex_content = f.read()
-            
-            # Prepare Overleaf API request
-            headers = {
-                'Authorization': f'Bearer {self.config["overleaf"]["api_key"]}',
-                'Content-Type': 'application/json'
-            }
-            
-            # Compile project
-            compile_url = f"{self.config['overleaf']['api_url']}/projects/{self.config['overleaf']['project_id']}/compile"
-            
-            response = requests.post(compile_url, headers=headers, timeout=30)
-            
-            if response.status_code == 200:
-                # Download compiled PDF
-                pdf_url = response.json().get('pdf_url')
-                if pdf_url:
-                    pdf_response = requests.get(pdf_url)
-                    if pdf_response.status_code == 200:
-                        with open(output_file, 'wb') as f:
-                            f.write(pdf_response.content)
-                        logger.info(f"Successfully converted with Overleaf: {output_file}")
-                        return True
-            
-            logger.error(f"Overleaf conversion failed: {response.text}")
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error during Overleaf conversion: {e}")
-            return False
-    
-    def send_email(self, pdf_file: str, subject: str = "PDF Document") -> bool:
+
+    # ----------------------------------------------------------------
+    def send_email(self, attachment_path: str, subject="IEEE Paper Generated"):
         """Send PDF via email"""
         try:
-            if not all([self.config['email']['username'], 
-                       self.config['email']['password'], 
-                       self.config['email']['to_email']]):
-                logger.warning("Email configuration incomplete, skipping email")
+            e = self.config['email']
+            if not all([e['username'], e['password'], e['to_email']]):
+                logger.warning("Incomplete email configuration.")
                 return False
-            
-            # Create message
+
             msg = MIMEMultipart()
-            msg['From'] = self.config['email']['from_email'] or self.config['email']['username']
-            msg['To'] = self.config['email']['to_email']
+            msg['From'] = e['from_email'] or e['username']
+            msg['To'] = e['to_email']
             msg['Subject'] = subject
-            
-            # Add body
-            body = f"Please find the attached PDF document generated from {Path(pdf_file).stem}"
-            msg.attach(MIMEText(body, 'plain'))
-            
-            # Attach PDF
-            with open(pdf_file, 'rb') as attachment:
+            msg.attach(MIMEText("Please find attached your IEEE formatted paper.", 'plain'))
+
+            with open(attachment_path, 'rb') as f:
                 part = MIMEBase('application', 'octet-stream')
-                part.set_payload(attachment.read())
+                part.set_payload(f.read())
                 encoders.encode_base64(part)
-                part.add_header(
-                    'Content-Disposition',
-                    f'attachment; filename= {Path(pdf_file).name}'
-                )
+                part.add_header('Content-Disposition', f'attachment; filename={Path(attachment_path).name}')
                 msg.attach(part)
-            
-            # Send email
-            server = smtplib.SMTP(self.config['email']['smtp_server'], 
-                                self.config['email']['smtp_port'])
+
+            server = smtplib.SMTP(e['smtp_server'], e['smtp_port'])
             server.starttls()
-            server.login(self.config['email']['username'], 
-                        self.config['email']['password'])
-            text = msg.as_string()
-            server.sendmail(msg['From'], msg['To'], text)
+            server.login(e['username'], e['password'])
+            server.sendmail(msg['From'], msg['To'], msg.as_string())
             server.quit()
-            
-            logger.info(f"Email sent successfully to {self.config['email']['to_email']}")
+            logger.info(f"Emailed {attachment_path} to {e['to_email']}")
             return True
-            
-        except Exception as e:
-            logger.error(f"Error sending email: {e}")
+        except Exception as ex:
+            logger.error(f"Email failed: {ex}")
             return False
-    
-    def trigger_n8n_workflow(self, pdf_file: str, metadata: Dict) -> bool:
-        """Trigger n8n workflow with PDF file"""
+
+    # ----------------------------------------------------------------
+    def refine_to_ieee_style(self, markdown_text: str):
+        """Use OpenAI to convert Markdown content to IEEE-style sections"""
         try:
-            if not self.config['n8n']['webhook_url']:
-                logger.warning("n8n webhook URL not configured, skipping n8n trigger")
-                return False
-            
-            # Prepare payload
-            payload = {
-                'pdf_file': pdf_file,
-                'metadata': metadata,
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            headers = {}
-            if self.config['n8n']['api_key']:
-                headers['Authorization'] = f"Bearer {self.config['n8n']['api_key']}"
-            
-            response = requests.post(
-                self.config['n8n']['webhook_url'],
-                json=payload,
-                headers=headers,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                logger.info("n8n workflow triggered successfully")
-                return True
-            else:
-                logger.error(f"n8n workflow failed: {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error triggering n8n workflow: {e}")
-            return False
-    
-    def refine_academic_writing(self, content: str, file_type: str, journal_style: str = "formal") -> Dict:
-        """Use OpenAI to refine writing into formal, academic-journal style language"""
-        try:
-            if not self.config.get('openai', {}).get('api_key'):
-                logger.warning("OpenAI API key not configured, skipping writing refinement")
-                return {"error": "OpenAI API key not configured"}
-            
-            # Define academic writing style prompts based on journal style
-            style_prompts = {
-                "formal": """
-                Refine this text into formal, academic-journal style language. Focus on:
-                1. Using precise, scholarly vocabulary
-                2. Maintaining objective, third-person perspective
-                3. Employing passive voice where appropriate
-                4. Ensuring proper academic sentence structure
-                5. Adding appropriate academic transitions and connectors
-                6. Maintaining consistency in terminology
-                7. Ensuring proper academic tone and register
-                """,
-                "ieee": """
-                Refine this text for IEEE journal/conference style. Focus on:
-                1. IEEE-specific terminology and conventions
-                2. Technical precision and clarity
-                3. Proper use of technical abbreviations
-                4. IEEE citation and reference formatting
-                5. Formal engineering writing style
-                6. Clear problem statement and methodology
-                """,
-                "acm": """
-                Refine this text for ACM journal/conference style. Focus on:
-                1. ACM-specific terminology and conventions
-                2. Computer science writing standards
-                3. Clear algorithmic descriptions
-                4. Proper use of technical terminology
-                5. ACM citation and reference formatting
-                6. Formal computer science writing style
-                """,
-                "springer": """
-                Refine this text for Springer journal style. Focus on:
-                1. Springer-specific formatting requirements
-                2. Scientific writing standards
-                3. Clear methodology and results presentation
-                4. Proper scientific terminology
-                5. Springer citation and reference formatting
-                6. Formal scientific writing style
-                """,
-                "elsevier": """
-                Refine this text for Elsevier journal style. Focus on:
-                1. Elsevier-specific formatting requirements
-                2. Medical/scientific writing standards
-                3. Clear methodology and results presentation
-                4. Proper scientific terminology
-                5. Elsevier citation and reference formatting
-                6. Formal scientific writing style
-                """,
-                "nature": """
-                Refine this text for Nature journal style. Focus on:
-                1. Nature-specific formatting requirements
-                2. High-impact scientific writing standards
-                3. Clear, concise scientific communication
-                4. Proper scientific terminology
-                5. Nature citation and reference formatting
-                6. Formal, prestigious scientific writing style
-                """
-            }
-            
-            # Get the appropriate style prompt
-            style_prompt = style_prompts.get(journal_style, style_prompts["formal"])
-            
-            # Create the full prompt
-            full_prompt = f"""
-            {style_prompt}
-            
-            Please refine the following {file_type} content while maintaining the original structure and formatting:
-            
-            {content}
-            
-            Return the refined content in the same format ({file_type}) with improved academic writing style.
+            if not self.config['openai']['api_key']:
+                return {"error": "OpenAI API key not set"}
+
+            prompt = f"""
+            You are an expert IEEE research paper writer.
+            Convert the following Markdown text into a properly structured IEEE-style paper
+            with these sections:
+            - Abstract
+            - Keywords
+            - Introduction
+            - Methodology
+            - Results and Discussion
+            - Conclusion
+
+            Ensure it follows IEEE tone, academic language, and clarity.
+            Markdown text:
+            {markdown_text}
             """
-            
-            # Get OpenAI configuration
-            openai_config = self.config.get('openai', {})
-            model = openai_config.get('model', 'gpt-4o-mini')
-            temperature = openai_config.get('temperature', 0.3)
-            max_tokens = openai_config.get('max_tokens', 4000)
-            
-            # Call OpenAI API
+
             client = openai.OpenAI(api_key=openai.api_key)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": f"You are an expert academic writing assistant specializing in {journal_style} journal formatting and formal academic writing standards."
-                    },
-                    {
-                        "role": "user", 
-                        "content": full_prompt
-                    }
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature
+            resp = client.chat.completions.create(
+                model=self.config['openai']['model'],
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=self.config['openai']['max_tokens'],
+                temperature=self.config['openai']['temperature']
             )
-            
-            refined_content = response.choices[0].message.content
-            
-            return {
-                "refined_content": refined_content,
-                "journal_style": journal_style,
-                "file_type": file_type,
-                "timestamp": datetime.now().isoformat(),
-                "model_used": model,
-                "tokens_used": response.usage.total_tokens if response.usage else None
-            }
-            
+            refined = resp.choices[0].message.content
+            return {"content": refined}
         except Exception as e:
-            logger.error(f"Error refining academic writing: {e}")
+            logger.error(f"OpenAI refinement failed: {e}")
             return {"error": str(e)}
-    
-    def process_file_with_refinement(self, input_file: str, journal_style: str = "formal", 
-                                   use_overleaf: bool = False, send_email: bool = True, 
-                                   trigger_n8n: bool = True) -> bool:
-        """Process file with OpenAI writing refinement"""
+
+    # ----------------------------------------------------------------
+    def fill_ieee_template(self, ieee_text: str, template_path="Conference-template-A4.docx"):
+        """Fill IEEE Word template with AI-generated content"""
         try:
-            # Read the original content
+            if not os.path.exists(template_path):
+                logger.error(f"Template file not found: {template_path}")
+                return None
+
+            doc = Document(template_path)
+            sections = ["Abstract", "Keywords", "Introduction", "Methodology", "Results", "Conclusion"]
+            content = {s: "" for s in sections}
+
+            # Extract each section
+            current = None
+            for line in ieee_text.splitlines():
+                for sec in sections:
+                    if sec.lower() in line.lower():
+                        current = sec
+                        break
+                else:
+                    if current:
+                        content[current] += line + "\n"
+
+            # Replace placeholders
+            for p in doc.paragraphs:
+                txt = p.text.lower()
+                if "abstract" in txt:
+                    p.text = "Abstract—" + content.get("Abstract", "")
+                elif "index terms" in txt or "keywords" in txt:
+                    p.text = "Keywords—" + content.get("Keywords", "")
+                elif "introduction" in txt:
+                    p.text = "I. Introduction\n" + content.get("Introduction", "")
+                elif "methodology" in txt:
+                    p.text = "II. Methodology\n" + content.get("Methodology", "")
+                elif "results" in txt:
+                    p.text = "III. Results and Discussion\n" + content.get("Results", "")
+                elif "conclusion" in txt:
+                    p.text = "IV. Conclusion\n" + content.get("Conclusion", "")
+
+            out_dir = Path(self.config['output']['directory'])
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            out_docx = out_dir / "IEEE_Generated_Paper.docx"
+            doc.save(str(out_docx))
+
+            # Convert DOCX → PDF
+            pdf_out = out_dir / "IEEE_Generated_Paper.pdf"
+            try:
+                # Try to use soffice directly first
+                subprocess.run(["soffice", "--headless", "--convert-to", "pdf", str(out_docx), "--outdir", str(out_dir)], check=True)
+                logger.info(f"Generated PDF: {pdf_out}")
+            except Exception:
+                try:
+                    # Try with full path to LibreOffice
+                    subprocess.run(["C:\\Program Files\\LibreOffice\\program\\soffice.exe", "--headless", "--convert-to", "pdf", str(out_docx), "--outdir", str(out_dir)], check=True)
+                    logger.info(f"Generated PDF: {pdf_out}")
+                except Exception:
+                    logger.warning("LibreOffice not found. Sending DOCX instead of PDF.")
+                    pdf_out = out_docx
+
+            return str(pdf_out)
+        except Exception as e:
+            logger.error(f"Error filling IEEE template: {e}")
+            return None
+
+    # ----------------------------------------------------------------
+    def process_markdown(self, input_file: str):
+        """Full process: Markdown → IEEE DOCX/PDF"""
+        try:
             with open(input_file, 'r', encoding='utf-8') as f:
-                original_content = f.read()
+                md = f.read()
+            logger.info(f"Processing Markdown file: {input_file}")
+
+            ieee_data = self.refine_to_ieee_style(md)
+            if 'error' in ieee_data:
+                logger.error(ieee_data['error'])
+                return False
+            
+            # Check if content exists
+            if 'content' not in ieee_data or not ieee_data['content']:
+                logger.error("No content returned from refinement.")
+                return False
+
+            pdf_result = self.fill_ieee_template(ieee_data['content'])
+            if not pdf_result:
+                logger.error("Failed to generate IEEE document.")
+                return False
+            pdf_path = pdf_result
+
+            logger.info("IEEE Paper successfully created.")
+            return True
+        except Exception as e:
+            logger.error(f"Markdown processing error: {e}")
+            return False
+
+    # ----------------------------------------------------------------
+    def process_file(self, input_file: str, use_overleaf=False, send_email=True, trigger_n8n=True, email_recipient=None):
+        """Process file with academic formatting (Pandoc only)"""
+        try:
+            # For now, we'll use the existing markdown processing
+            # In a more complete implementation, this would handle different file types
+            
+            # Read the input file
+            with open(input_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Save content to a temporary markdown file if needed
+            temp_file = input_file
+            
+            # Process the file as markdown
+            result = self.process_markdown(temp_file)
+            
+            # If processing was successful and we need to send email
+            if result and send_email:
+                # Find the generated PDF
+                output_dir = Path(self.config['output']['directory'])
+                pdf_files = list(output_dir.glob('*.pdf'))
+                latest_pdf = max(pdf_files, key=os.path.getctime) if pdf_files else None
+                
+                if latest_pdf:
+                    # Use the provided email recipient or fall back to config
+                    if email_recipient:
+                        # Temporarily update the config for this send operation
+                        original_recipient = self.config['email']['to_email']
+                        self.config['email']['to_email'] = email_recipient
+                        self.send_email(str(latest_pdf), subject="Your Converted PDF is Ready ✅")
+                        # Restore original recipient
+                        self.config['email']['to_email'] = original_recipient
+                    else:
+                        self.send_email(str(latest_pdf), subject="Your Converted PDF is Ready ✅")
+            
+            return result
+        except Exception as e:
+            logger.error(f"File processing error: {e}")
+            return False
+
+    # ----------------------------------------------------------------
+    def process_file_with_refinement(self, input_file: str, journal_style: str = "formal", use_overleaf=False, send_email=True, trigger_n8n=True, email_recipient=None):
+        """Process file with academic writing refinement"""
+        try:
+            # Read the input file
+            with open(input_file, 'r', encoding='utf-8') as f:
+                content = f.read()
             
             # Detect file type
-            file_type = self.detect_file_type(input_file)
-            if not file_type:
-                logger.error(f"Unsupported file type: {input_file}")
+            file_type = 'latex' if input_file.endswith(('.tex', '.latex')) else 'markdown'
+            
+            # Refine the content
+            refinement = self.refine_academic_writing(content, file_type, journal_style)
+            if 'error' in refinement:
+                logger.error(refinement['error'])
                 return False
             
-            # Refine the writing
-            logger.info(f"Refining academic writing for {file_type} file with {journal_style} style...")
-            refinement_result = self.refine_academic_writing(original_content, file_type, journal_style)
-            
-            if 'error' in refinement_result:
-                logger.error(f"Writing refinement failed: {refinement_result['error']}")
+            # Check if refined content exists
+            if 'refined_content' not in refinement or not refinement['refined_content']:
+                logger.error("No refined content returned from refinement.")
                 return False
             
-            # Create refined file
-            input_path = Path(input_file)
-            refined_filename = f"refined_{input_path.stem}_{journal_style}{input_path.suffix}"
-            refined_filepath = os.path.join(os.path.dirname(input_file), refined_filename)
+            # Save refined content to a temporary file
+            temp_dir = Path(self.config['output']['directory'])
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            temp_file = temp_dir / f"refined_{Path(input_file).name}"
             
-            with open(refined_filepath, 'w', encoding='utf-8') as f:
-                f.write(refinement_result['refined_content'])
-            
-            logger.info(f"Writing refined and saved to: {refined_filepath}")
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(refinement['refined_content'])
             
             # Process the refined file
-            return self.process_file(refined_filepath, use_overleaf, send_email, trigger_n8n)
-            
+            result = self.process_file(str(temp_file), use_overleaf, send_email, trigger_n8n, email_recipient)
+            return result
         except Exception as e:
-            logger.error(f"Error processing file with refinement: {e}")
+            logger.error(f"File processing with refinement error: {e}")
             return False
-    
-    def process_file(self, input_file: str, use_overleaf: bool = False, 
-                    send_email: bool = True, trigger_n8n: bool = True) -> bool:
-        """Main processing function"""
+
+    # ----------------------------------------------------------------
+    def refine_academic_writing(self, content: str, file_type: str, journal_style: str = "formal"):
+        """Refine academic writing using OpenAI"""
         try:
-            # Validate input file
-            if not os.path.exists(input_file):
-                logger.error(f"Input file not found: {input_file}")
-                return False
-            
-            # Detect file type
-            file_type = self.detect_file_type(input_file)
-            if not file_type:
-                logger.error(f"Unsupported file type: {input_file}")
-                return False
-            
-            logger.info(f"Processing {file_type} file: {input_file}")
-            
-            # Generate output filename
-            input_path = Path(input_file)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_filename = self.config['output']['filename_template'].format(
-                original_name=input_path.stem,
-                timestamp=timestamp
-            )
-            output_file = os.path.join(self.config['output']['directory'], output_filename)
-            
-            # Convert to PDF
-            success = False
-            if file_type == 'latex' and use_overleaf:
-                success = self.convert_with_overleaf(input_file, output_file)
-                if not success:
-                    logger.info("Overleaf conversion failed, falling back to pandoc")
-                    success = self.convert_with_pandoc(input_file, output_file, file_type)
-            else:
-                success = self.convert_with_pandoc(input_file, output_file, file_type)
-            
-            if not success:
-                logger.error("PDF conversion failed")
-                return False
-            
-            # Prepare metadata
-            metadata = {
-                'input_file': input_file,
-                'output_file': output_file,
-                'file_type': file_type,
-                'conversion_method': 'overleaf' if (file_type == 'latex' and use_overleaf) else 'pandoc',
-                'timestamp': timestamp
+            if not self.config['openai']['api_key']:
+                return {"error": "OpenAI API key not set"}
+
+            style_prompts = {
+                "formal": "Ensure formal academic tone with proper structure and clarity.",
+                "ieee": "Convert to IEEE journal style with technical precision and structure."
             }
             
-            # Send email if requested
-            if send_email:
-                subject = f"PDF Document: {input_path.stem}"
-                self.send_email(output_file, subject)
+            style_prompt = style_prompts.get(journal_style, style_prompts["formal"])
             
-            # Trigger n8n workflow if requested
-            if trigger_n8n:
-                self.trigger_n8n_workflow(output_file, metadata)
+            prompt = f"""
+            Refine the following {file_type} content into {journal_style} academic style:
             
-            logger.info(f"Successfully processed {input_file} -> {output_file}")
-            return True
+            {style_prompt}
             
+            Content:
+            {content}
+            """
+
+            client = openai.OpenAI(api_key=openai.api_key)
+            resp = client.chat.completions.create(
+                model=self.config['openai']['model'],
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=self.config['openai']['max_tokens'],
+                temperature=self.config['openai']['temperature']
+            )
+            refined = resp.choices[0].message.content
+            return {"refined_content": refined}
         except Exception as e:
-            logger.error(f"Error processing file {input_file}: {e}")
-            return False
-    
-    def process_directory(self, directory: str, **kwargs) -> List[bool]:
-        """Process all supported files in a directory"""
-        results = []
-        directory_path = Path(directory)
-        
-        if not directory_path.exists():
-            logger.error(f"Directory not found: {directory}")
-            return results
-        
-        # Find all supported files
-        files = []
-        for ext in self.supported_formats:
-            files.extend(directory_path.glob(f"*{ext}"))
-        
-        logger.info(f"Found {len(files)} files to process in {directory}")
-        
-        for file_path in files:
-            result = self.process_file(str(file_path), **kwargs)
-            results.append(result)
-        
-        return results
+            logger.error(f"OpenAI refinement failed: {e}")
+            return {"error": str(e)}
 
+# ----------------------------------------------------------------
 def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description='AI Agent for PDF conversion')
-    parser.add_argument('input', help='Input file or directory path')
-    parser.add_argument('--config', default='config.json', help='Configuration file path')
-    parser.add_argument('--overleaf', action='store_true', help='Use Overleaf for LaTeX conversion')
-    parser.add_argument('--no-email', action='store_true', help='Skip email sending')
-    parser.add_argument('--no-n8n', action='store_true', help='Skip n8n workflow trigger')
-    parser.add_argument('--directory', action='store_true', help='Process entire directory')
-    
+    parser = argparse.ArgumentParser(description="Convert Markdown → IEEE Paper (PDF + Email)")
+    parser.add_argument("input", help="Path to Markdown file (.md)")
+    parser.add_argument("--config", default="config.json", help="Path to config.json")
     args = parser.parse_args()
-    
-    # Initialize agent
-    agent = PDFAgent(args.config)
-    
-    # Process input
-    if args.directory:
-        results = agent.process_directory(
-            args.input,
-            use_overleaf=args.overleaf,
-            send_email=not args.no_email,
-            trigger_n8n=not args.no_n8n
-        )
-        success_count = sum(results)
-        total_count = len(results)
-        logger.info(f"Processed {success_count}/{total_count} files successfully")
-    else:
-        success = agent.process_file(
-            args.input,
-            use_overleaf=args.overleaf,
-            send_email=not args.no_email,
-            trigger_n8n=not args.no_n8n
-        )
-        if success:
-            logger.info("File processed successfully")
-        else:
-            logger.error("File processing failed")
-            sys.exit(1)
 
+    agent = PDFAgent(args.config)
+    if Path(args.input).suffix.lower() not in ['.md', '.markdown']:
+        logger.error("Only Markdown (.md) files are supported.")
+        sys.exit(1)
+
+    success = agent.process_markdown(args.input)
+    sys.exit(0 if success else 1)
+
+# ----------------------------------------------------------------
 if __name__ == "__main__":
     main()

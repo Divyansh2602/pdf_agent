@@ -15,11 +15,11 @@ setup(
     name="pdf-agent",
     version="1.0.0",
     author="PDF Agent Team",
-    author_email="contact@pdfagent.com",
+    author_email="pdf.converter.now@gmail.com",
     description="AI-powered document conversion agent for LaTeX and Markdown to PDF",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/pdf-agent",
+    url="https://github.com/SnehalKansal/pdf_agent",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
