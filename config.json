@@ -11,22 +11,22 @@
     "overleaf": {
         "api_url": "https://www.overleaf.com/api/v1",
         "api_key": "",
-        "project_id": "68c47ff6d9c082934a745612"
+        "project_id": ""
     },
     "email": {
         "smtp_server": "smtp.gmail.com",
         "smtp_port": 587,
-        "username": "pdf.converter.now@gmail.com",
-        "password": "wvox lptb ympe emey",
-        "from_email": "pdf.converter.now@gmail.com",
-        "to_email": "snehalkansal10@gmail.com"
+        "username": "",
+        "password": "",
+        "from_email": "",
+        "to_email": ""
     },
     "n8n": {
         "webhook_url": "",
         "api_key": ""
     },
     "openai": {
-        "api_key": "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",
+        "api_key": "",
         "model": "gpt-4o-mini",
         "temperature": 0.3,
         "max_tokens": 4000
@@ -35,4 +35,5 @@
         "directory": "output",
         "filename_template": "{original_name}_{timestamp}.pdf"
     }
+
 }
