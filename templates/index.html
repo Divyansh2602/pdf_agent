@@ -677,6 +677,11 @@
                     </div>
                     
                     <div class="config-item">
+                        <label class="config-label" for="emailRecipient">Recipient Email</label>
+                        <input type="email" class="config-input" id="emailRecipient" placeholder="Enter email to send PDF">
+                    </div>
+                    
+                    <div class="config-item">
                         <label class="config-label">
                             <input type="checkbox" class="config-checkbox" id="sendEmail" checked> Send Email
                         </label>
@@ -733,7 +738,7 @@
                 </div>
                         <div class="feature-title">Academic Templates</div>
                         <div class="feature-description">
-                            Support for IEEE, ACM, Springer, Elsevier, and Nature journal formats. 
+                            Support for IEEE journal formats. 
                             Automatic template selection based on content analysis.
                     </div>
                     </div>
@@ -745,7 +750,7 @@
                         <div class="feature-title">Email Distribution</div>
                         <div class="feature-description">
                             Automatically send converted PDFs to advisors, reviewers, or collaborators 
-                            via email with customizable templates.
+                            via email.
                 </div>
             </div>
 
@@ -772,15 +777,15 @@
                     </div>
                 </div>
 
-                <!-- Update Notifications -->
+                <!-- PDF Conversion Status -->
                 <div class="updates-section">
                     <div class="updates-header">
                         <div class="updates-title">
-                            <i class="fas fa-bell"></i> Updates & Notifications
+                            <i class="fas fa-file-pdf"></i> Conversion Status
                         </div>
                     </div>
                     <div id="updatesList">
-                        <!-- Updates will be loaded here -->
+                        <!-- Status updates will be loaded here -->
                     </div>
                 </div>
             </div>
@@ -1028,7 +1033,8 @@
             const options = {
                 use_overleaf: document.getElementById('useOverleaf').checked,
                 send_email: document.getElementById('sendEmail').checked,
-                trigger_n8n: document.getElementById('triggerN8n').checked
+                trigger_n8n: document.getElementById('triggerN8n').checked,
+                email_recipient: document.getElementById('emailRecipient').value
             };
             
             fetch('/api/convert', {

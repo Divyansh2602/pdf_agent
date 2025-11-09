@@ -11,15 +11,15 @@
     "overleaf": {
         "api_url": "https://www.overleaf.com/api/v1",
         "api_key": "",
-        "project_id": "68c47ff6d9c082934a745612"
+        "project_id": ""
     },
     "email": {
         "smtp_server": "smtp.gmail.com",
         "smtp_port": 587,
-        "username": "divyansh2622005@gmail.com",
+        "username": "",
         "password": "",
-        "from_email": "divyansh2622005@gmail.com",
-        "to_email": "divyanshg2602@gmail.com"
+        "from_email": "",
+        "to_email": ""
     },
     "n8n": {
         "webhook_url": "",
@@ -35,4 +35,5 @@
         "directory": "output",
         "filename_template": "{original_name}_{timestamp}.pdf"
     }
+
 }

@@ -42,25 +42,20 @@ os.makedirs('output', exist_ok=True)
 sessions = {}
 agent = PDFAgent()
 
-# Initialize OpenAI
-openai.api_key = os.getenv('OPENAI_API_KEY')
+# Initialize OpenAI from agent config
+if agent.config.get('openai', {}).get('api_key'):
+    openai.api_key = agent.config['openai']['api_key']
+else:
+    openai.api_key = os.getenv('OPENAI_API_KEY')
 
 # Update notifications system
 UPDATE_NOTIFICATIONS = [
-    {
-        "id": "v1.2.0",
-        "title": "Chatbot Interface Removed",
-        "message": "The chatbot interface has been removed for a cleaner, more focused experience. All PDF conversion features remain fully functional.",
-        "type": "info",
-        "date": "2024-01-15",
-        "dismissible": True
-    },
     {
         "id": "v1.1.0", 
         "title": "Enhanced File Processing",
         "message": "Improved file upload and conversion processing with better error handling and status updates.",
         "type": "success",
-        "date": "2024-01-10",
+        "date": "25-10-2025",
         "dismissible": True
     },
     {
@@ -68,7 +63,7 @@ UPDATE_NOTIFICATIONS = [
         "title": "Initial Release",
         "message": "Welcome to the AI PDF Agent! Convert LaTeX and Markdown files to PDF with advanced formatting options.",
         "type": "info",
-        "date": "2024-01-01",
+        "date": "13-10-2025",
         "dismissible": False
     }
 ]
@@ -83,30 +78,6 @@ JOURNAL_TEMPLATES = {
         'template': 'ieee-template.tex',
         'pandoc_options': ['--template', 'ieee-template.tex', '--csl', 'ieee.csl'],
         'description': 'IEEE format for conferences and journals'
-    },
-    'acm': {
-        'name': 'ACM Conference/Journal',
-        'template': 'acm-template.tex',
-        'pandoc_options': ['--template', 'acm-template.tex', '--csl', 'acm.csl'],
-        'description': 'ACM format for conferences and journals'
-    },
-    'springer': {
-        'name': 'Springer Journal',
-        'template': 'springer-template.tex',
-        'pandoc_options': ['--template', 'springer-template.tex', '--csl', 'springer.csl'],
-        'description': 'Springer format for academic journals'
-    },
-    'elsevier': {
-        'name': 'Elsevier Journal',
-        'template': 'elsevier-template.tex',
-        'pandoc_options': ['--template', 'elsevier-template.tex', '--csl', 'elsevier.csl'],
-        'description': 'Elsevier format for academic journals'
-    },
-    'nature': {
-        'name': 'Nature Journal',
-        'template': 'nature-template.tex',
-        'pandoc_options': ['--template', 'nature-template.tex', '--csl', 'nature.csl'],
-        'description': 'Nature format for scientific journals'
     }
 }
 
@@ -141,7 +112,7 @@ def analyze_academic_content(content, file_type):
         prompt = f"""
         Analyze this {file_type} academic document and provide:
         1. Document type (research paper, conference paper, journal article, etc.)
-        2. Suggested journal templates (IEEE, ACM, Springer, Elsevier, Nature)
+        2. Suggested journal templates (IEEE)
         3. Content structure analysis
         4. Missing elements (abstract, keywords, references, etc.)
         5. Formatting recommendations
@@ -180,18 +151,14 @@ def get_journal_recommendations(content, file_type):
         prompt = f"""
         Based on this {file_type} academic content, recommend the most suitable journal templates from:
         - IEEE (for computer science, engineering)
-        - ACM (for computer science, software engineering)
-        - Springer (for various scientific fields)
-        - Elsevier (for medical, scientific journals)
-        - Nature (for high-impact scientific journals)
         
         Provide:
-        1. Top 3 recommended templates
-        2. Reasoning for each recommendation
+        1. Top 1 recommended template
+        2. Reasoning for the recommendation
         3. Specific formatting requirements
         
-        Content preview:
-        {content[:2000]}
+        Content:
+        {content}
         """
         
         client = openai.OpenAI(api_key=openai.api_key)
@@ -232,7 +199,7 @@ def enhance_academic_content(content, file_type, journal_template):
         5. Add appropriate LaTeX formatting for {journal_template}
         
         Current content:
-        {content[:3000]}
+        {content}
         
         Return the enhanced content in the same format ({file_type}).
         """
@@ -265,7 +232,8 @@ def refine_academic_writing(content, file_type, journal_style="formal"):
             return {"error": "OpenAI API key not configured"}
         
         # Use the agent's refinement method
-        return agent.refine_academic_writing(content, file_type, journal_style)
+        agent_instance = PDFAgent()
+        return agent_instance.refine_academic_writing(content, file_type, journal_style)
     
     except Exception as e:
         logger.error(f"Writing refinement error: {e}")
@@ -289,7 +257,7 @@ def upload_file():
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
         
-        if file and allowed_file(file.filename):
+        if file and file.filename and allowed_file(file.filename):
             filename = secure_filename(file.filename)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{timestamp}_{filename}"
@@ -642,6 +610,10 @@ def refine_writing():
         if 'error' in refinement:
             return jsonify(refinement), 500
         
+        # Check if refined content exists
+        if 'refined_content' not in refinement or not refinement['refined_content']:
+            return jsonify({'error': 'No refined content returned'}), 500
+        
         # Save refined content
         refined_filename = f"refined_{file_info['filename']}"
         refined_filepath = os.path.join(app.config['UPLOAD_FOLDER'], refined_filename)
@@ -781,7 +753,8 @@ def process_refinement_conversion(session_id, file_info, journal_style, options)
             journal_style=journal_style,
             use_overleaf=options.get('use_overleaf', False),
             send_email=options.get('send_email', True),
-            trigger_n8n=options.get('trigger_n8n', True)
+            trigger_n8n=options.get('trigger_n8n', True),
+            email_recipient=options.get('email_recipient', None)
         )
         
         if success:
