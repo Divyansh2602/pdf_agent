@@ -464,7 +464,15 @@
                     <label class="email-input-label" for="emailRecipient">Recipient Email</label>
                     <input type="email" class="email-input" id="emailRecipient" placeholder="Enter email to send PDF">
                 </div>
-
+                
+                <!-- AI Formatting Option -->
+                <div class="email-input-container">
+                    <label class="email-input-label">
+                        <input type="checkbox" id="useAiFormatting" style="margin-right: 8px;">
+                        Use AI Formatting (IEEE Style)
+                    </label>
+                </div>
+                
                 <!-- File List -->
                 <div class="file-list" id="fileList">
                     <!-- Files will be added here dynamically -->
@@ -661,7 +669,8 @@
         function convertFile(filename) {
             const options = {
                 send_email: true,
-                email_recipient: emailRecipient.value
+                email_recipient: emailRecipient.value,
+                use_ai_formatting: document.getElementById('useAiFormatting').checked
             };
             
             fetch('/api/convert', {
