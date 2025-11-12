@@ -224,15 +224,158 @@ class PDFAgent:
             logger.error(f"File processing error: {e}")
             return False
 
+    # ----------------------------------------------------------------
+    def refine_to_ieee_style(self, content: str, file_type: str):
+        """Use OpenAI to convert content to IEEE-style sections"""
+        try:
+            if not self.config['openai']['api_key']:
+                return {"error": "OpenAI API key not set"}
+
+            prompt = f"""
+            You are an expert IEEE research paper writer and editor. Convert the following {file_type} text into a formally structured IEEE-style research paper with the exact section layout and formatting rules described below.
+
+            Required Paper Structure:
+
+            Abstract:
+
+            Write a single, cohesive paragraph summarizing the entire paper.
+
+            Do not include the word "Abstract" at the beginning.
+
+            Keywords:
+
+            Provide 3–8 technical keywords separated by commas.
+
+            Do not include the word "Keywords" at the beginning.
+
+            I. INTRODUCTION
+
+            Write a detailed paragraph introducing the topic, background, motivation, and objectives.
+
+            Ensure clarity and academic tone.
+
+            II. METHODOLOGY
+
+            Write a detailed paragraph explaining the methods, techniques, datasets, or approaches used in the research.
+
+            III. RESULTS AND DISCUSSION
+
+            Present key findings, insights, or performance results.
+
+            Include analytical discussion of implications, strengths, and limitations.
+
+            IV. CONCLUSION
+
+            Summarize the major contributions and findings.
+
+            Include remarks on possible future work or open challenges.
+
+            Formatting Rules:
+
+            Do NOT include section headers like "Abstract:" or "Keywords:" in the text — only the content.
+
+            Do NOT include section numbers (I., II., etc.) inside the content paragraphs.
+
+            Each section must be written as a formal, detailed academic paragraph (not bullet points).
+
+            Use technical, IEEE-style English — precise, impersonal, and objective.
+
+            Preserve the technical meaning and flow of the original {file_type} text but improve clarity and grammar.
+
+            Content:
+            {content}
+            
+            IMPORTANT: Your response should ONLY contain the properly formatted IEEE paper content. Do not include any explanations or additional text.
+            """
+            
+            client = openai.OpenAI(api_key=self.config['openai']['api_key'])
+            resp = client.chat.completions.create(
+                model=self.config['openai']['model'],
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=self.config['openai']['max_tokens'],
+                temperature=self.config['openai']['temperature']
+            )
+            refined = resp.choices[0].message.content
+            return {"content": refined}
+        except Exception as e:
+            logger.error(f"OpenAI refinement failed: {e}")
+            return {"error": str(e)}
+
+    # ----------------------------------------------------------------
+    def process_with_ieee_refinement(self, input_file: str, send_email=True, email_recipient=None):
+        """Process file with IEEE academic writing refinement"""
+        try:
+            # Read the input file
+            with open(input_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Detect file type
+            file_type = 'latex' if input_file.endswith(('.tex', '.latex')) else 'markdown'
+            
+            # Refine the content to IEEE style
+            refinement = self.refine_to_ieee_style(content, file_type)
+            if 'error' in refinement:
+                logger.error(refinement['error'])
+                return False
+            
+            # Check if refined content exists
+            if 'content' not in refinement or not refinement['content']:
+                logger.error("No content returned from refinement.")
+                return False
+            
+            # Save refined content to a temporary file
+            temp_dir = Path(self.config['output']['directory'])
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            temp_file = temp_dir / f"ieee_{Path(input_file).name}"
+            
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(refinement['content'])
+            
+            # Process the refined file
+            result = self.process_file(str(temp_file), send_email, email_recipient)
+            return result
+        except Exception as e:
+            logger.error(f"File processing with IEEE refinement error: {e}")
+            return False
+
+    # ----------------------------------------------------------------
+    def process_file_with_fallback(self, input_file: str, send_email=True, email_recipient=None, use_ai_refinement=False):
+        """Process file with fallback from AI refinement to pandoc if AI fails"""
+        try:
+            logger.info(f"Processing file: {input_file}")
+            
+            if use_ai_refinement:
+                logger.info("Attempting AI-based IEEE formatting...")
+                success = self.process_with_ieee_refinement(input_file, send_email, email_recipient)
+                if success:
+                    logger.info("AI-based formatting successful!")
+                    return True
+                else:
+                    logger.warning("AI-based formatting failed, falling back to pandoc...")
+            
+            # Fallback to standard pandoc processing
+            logger.info("Using standard pandoc processing...")
+            return self.process_file(input_file, send_email, email_recipient)
+            
+        except Exception as e:
+            logger.error(f"File processing with fallback error: {e}")
+            return False
+
 # ----------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Convert documents to IEEE format PDF")
     parser.add_argument("input", help="Path to input file (.md, .tex, etc.)")
     parser.add_argument("--config", default="config.json", help="Path to config.json")
+    parser.add_argument("--refine", action="store_true", help="Refine to IEEE academic writing")
+    parser.add_argument("--no-email", action="store_true", help="Skip email sending")
     args = parser.parse_args()
 
     agent = PDFAgent(args.config)
-    success = agent.process_file(args.input)
+    
+    if args.refine:
+        success = agent.process_with_ieee_refinement(args.input)
+    else:
+        success = agent.process_file(args.input, send_email=not args.no_email)
     
     sys.exit(0 if success else 1)
 
